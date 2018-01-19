@@ -1,4 +1,4 @@
-# Symphony
+# Symphoner
 
 Load/performance testing framework
 

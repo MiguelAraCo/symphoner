@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/symphony.iml" filepath="$PROJECT_DIR$/.idea/symphony.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../symphoner/.idea/symphoner.iml" filepath="$PROJECT_DIR$/../symphoner/.idea/symphoner.iml" />
     </modules>
   </component>
 </project>

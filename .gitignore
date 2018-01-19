@@ -1,3 +1,8 @@
+dist/
+
+# Node.js
+**/node_modules/
+
 # JetBrains editors
 .idea/workspace.xml
 .idea/dictionaries
