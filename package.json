@@ -1,0 +1,33 @@
+{
+  "name": "symphony",
+  "version": "0.0.0",
+  "description": "Load/performance testing framework",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MiguelAraCo/symphony.git"
+  },
+  "keywords": [
+    "load",
+    "performance",
+    "testing",
+    "test",
+    "tests",
+    "load-testing",
+    "load testing",
+    "performance-testing",
+    "performance testing"
+  ],
+  "contributors": [
+    "Miguel Aragón <miguel@araco.mx> (https://miguel.araco.mx/)",
+    "Rodolfo Aguirre <aguirreg.rodolfo@gmail.com>"
+  ],
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/MiguelAraCo/symphony/issues"
+  },
+  "homepage": "https://github.com/MiguelAraCo/symphony#readme"
+}
