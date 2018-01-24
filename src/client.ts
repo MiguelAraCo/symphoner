@@ -4,8 +4,9 @@ import { stat as _stat, Stats } from "fs";
 const stat:( file:string ) => Promise<Stats> = <any>promisify( _stat );
 
 import { process } from "./forkedProcess";
-import { EventMessage, CommandMessage } from "./message";
-import { Command, ExecuteAction } from "./command";
+import { EventMessage, CommandMessage, ClientEvent } from "./message";
+import { AbortCommand, Command, ExecuteActionCommand } from "./command";
+
 
 export class Client {
 	private _waiting:boolean = true;
@@ -14,7 +15,7 @@ export class Client {
 		this._register();
 	}
 
-	async start( command:ExecuteAction ) {
+	async start( command:ExecuteActionCommand ) {
 		let stats:Stats;
 		try {
 			stats = await stat( command.action );
@@ -35,6 +36,8 @@ export class Client {
 			action = require( command.action );
 		} catch( error ) {
 			console.error( "ERROR: Couldn't require action's script '%s':\n\t%o", command.action, error );
+			// FIXME
+			return;
 		}
 
 		if( typeof action !== "function" ) {
@@ -43,7 +46,7 @@ export class Client {
 			return;
 		}
 
-		process.send( new EventMessage( "Client:ActionStarted" ) );
+		process.send( new EventMessage( ClientEvent.ActionStarted ) );
 
 		let actionResult;
 		try {
@@ -62,12 +65,20 @@ export class Client {
 			return;
 		}
 
-		process.send( new EventMessage( "Client:ActionFinished" ) );
+		process.send( new EventMessage( ClientEvent.ActionFinished ) );
+
+		this._reset();
 	}
 
 	private _register():void {
 		process.on( "message", this._handleMessage.bind( this ) );
-		process.send( new EventMessage( "Client:Ready" ) );
+		this._reset();
+
+	}
+
+	private _reset():void {
+		this._waiting = true;
+		process.send( new EventMessage( ClientEvent.Ready ) );
 	}
 
 	private async _handleMessage( message:any ) {
@@ -99,20 +110,30 @@ export class Client {
 	private async _handleCommandMessage( message:CommandMessage ) {
 		switch( message.command.name ) {
 			case "ExecuteAction":
-				await this._handleExecuteAction( <any>message.command );
+				await this._handleExecuteAction( message.command as ExecuteActionCommand );
+				break;
+			case "Abort":
+				await this._handleAbortCommand( message.command as AbortCommand );
 				break;
 			default:
 				break;
 		}
 	}
 
-	private async _handleExecuteAction( command:ExecuteAction ) {
+	private async _handleExecuteAction( command:ExecuteActionCommand ) {
 		if( ! this._waiting ) {
 			console.log( "The client is already executing an action" );
 			return;
 		}
 
+		this._waiting = false;
+
 		await this.start( command );
+	}
+
+	private async _handleAbortCommand( command:AbortCommand ) {
+		// TODO: Should this be the code used?
+		process.exit( 1 );
 	}
 
 	private async _handleActionsError( action:string, error:any ) {

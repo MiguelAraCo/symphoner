@@ -1,6 +1,5 @@
-import { fork } from "child_process";
-import { CommandMessage } from "./message";
-import { ExecuteAction } from "./command";
+import { Test } from "./models";
+import { PhaseOrchestrator } from "./phaseOrchestrator";
 
 export interface StatsDConfiguration {
 	host:string;
@@ -9,22 +8,6 @@ export interface StatsDConfiguration {
 
 export interface SymphonerConfiguration {
 	statsd:StatsDConfiguration;
-}
-
-export interface Scenario {
-	distribution:number;
-	action:string;
-}
-
-export interface Phase {
-	duration:number;
-	clients:number;
-	arrivalRate:number;
-	scenarios:Scenario[];
-}
-
-export interface Test {
-	phases:Phase[];
 }
 
 export class Symphoner {
@@ -36,22 +19,9 @@ export class Symphoner {
 		// FIXME: Set timeout for phase end
 		// FIXME: Start ClientPool
 
-
 		test.phases.forEach( phase => {
-			phase.scenarios.forEach( scenario => {
-				const action = fork( __dirname + "/client" );
-				action.on( "message", message => console.log( message ) );
-				action.on( "disconnect", ( { ...args } ) => {
-					console.log( "disconnect", args );
-				} );
-				action.on( "exit", () => {
-					console.log( "exit" );
-				} );
-
-				setTimeout( () => {
-					action.send( new CommandMessage( new ExecuteAction( scenario.action ) ) );
-				}, 1000 );
-			} )
+			const orchestrator:PhaseOrchestrator = new PhaseOrchestrator( phase );
+			orchestrator.start();
 		} );
 	}
 }

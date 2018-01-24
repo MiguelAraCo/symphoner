@@ -1,5 +1,3 @@
-const { resolve } = require( "path" );
-
 const { Symphoner } = require( "./../dist" );
 const { time } = require( "./../dist/time" );
 
@@ -14,15 +12,15 @@ symphoner.run( {
 	phases: [
 		{
 			duration: time( 2 ).minutes,
-			arrivalRate: time( 10 ).seconds,
+			arrivalRate: time( 2 ).seconds,
 			clients: 5,
 			scenarios: [
 				// {
-				// 	action: resolve( "playground/read-test.js" ),
+				// 	action: __dirname + "/read-test.js",
 				// 	distribution: 80
 				// },
 				{
-					action: resolve( "playground/read-test.js" ),
+					action: __dirname + "/write-test.js",
 					distribution: 20
 				}
 			]
