@@ -4,11 +4,17 @@ import { stat as _stat, Stats } from "fs";
 const stat:( file:string ) => Promise<Stats> = <any>promisify( _stat );
 
 import { process } from "./forkedProcess";
-import { EventMessage, CommandMessage, ClientEvent } from "./message";
-import { AbortCommand, Command, ExecuteActionCommand } from "./command";
+import { EventMessage, ClientEvent, MessageSource } from "./message";
+import { AbortCommand, Command, CommandMessage, ExecuteActionCommand } from "./command";
+import { id } from "./id";
 
 
-export class Client {
+export class Client implements MessageSource {
+	static readonly type:string = "Client";
+
+	readonly id:string = id();
+	readonly type:string = Client.type;
+
 	private _waiting:boolean = true;
 
 	async init() {
@@ -16,6 +22,9 @@ export class Client {
 	}
 
 	async start( command:ExecuteActionCommand ) {
+		this._waiting = false;
+		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.Working ) );
+
 		let stats:Stats;
 		try {
 			stats = await stat( command.action );
@@ -46,7 +55,7 @@ export class Client {
 			return;
 		}
 
-		process.send( new EventMessage( ClientEvent.ActionStarted ) );
+		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.ActionStarted ) );
 
 		let actionResult;
 		try {
@@ -65,7 +74,7 @@ export class Client {
 			return;
 		}
 
-		process.send( new EventMessage( ClientEvent.ActionFinished ) );
+		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.ActionFinished ) );
 
 		this._reset();
 	}
@@ -78,7 +87,7 @@ export class Client {
 
 	private _reset():void {
 		this._waiting = true;
-		process.send( new EventMessage( ClientEvent.Ready ) );
+		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.Ready ) );
 	}
 
 	private async _handleMessage( message:any ) {
@@ -126,14 +135,15 @@ export class Client {
 			return;
 		}
 
-		this._waiting = false;
-
 		await this.start( command );
 	}
 
 	private async _handleAbortCommand( command:AbortCommand ) {
-		// TODO: Should this be the code used?
-		process.exit( 1 );
+		if( this._waiting ) return;
+
+		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.ActionAborted ) );
+
+		setTimeout( () => process.exit( 0 ), 0 );
 	}
 
 	private async _handleActionsError( action:string, error:any ) {

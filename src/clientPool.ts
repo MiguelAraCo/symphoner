@@ -1,63 +1,119 @@
 import { ClientWatcher } from "./clientWatcher";
-import { MessageEmitter } from "./models";
-import { ClientEvent, CommandMessage, EventMessage, Message } from "./message";
+import { ClientEvent, EventMessage, Message } from "./message";
+import { messageStream } from "./messageStream";
+import { id } from "./id";
+import { CommandMessage, ExecuteActionCommand } from "./command";
 
 export interface ClientPoolConfiguration {
 
 }
 
-export class ClientPool extends MessageEmitter {
+export class ClientPool {
+	readonly id:string = id();
+	readonly type:"ClientPool" = "ClientPool";
+
+	private _size:number = 0;
+
 	private _clients:ClientWatcher[] = [];
+	private _clientsReady:ClientWatcher[] = [];
+
+	private _listeners:string[] = [];
 
 	constructor( configuration?:ClientPoolConfiguration ) {
-		super();
+		this._registerListeners();
 	}
 
-	grow():void {
-		const client:ClientWatcher = new ClientWatcher();
+	grow( clients:number = 1 ):void {
+		this._size = this._size + clients;
+		while( this._clients.length < this._size ) this._addClient();
+	}
 
-		this._registerHandlers( client );
-
-		this._clients.push( client );
+	shrink( clients:number = 1, removeUnusedClients:boolean = false ):void {
+		this._size = this._size - clients;
 	}
 
 	size():number {
-		return this._clients.length;
+		return this._size;
 	}
 
-	private _registerHandlers( client:ClientWatcher ):void {
-		client.on( "message", this._handleClientMessage.bind( this, client ) );
+	clientsWorking():number {
+		return this._clients.length - this._clientsReady.length;
 	}
 
-	private _handleClientMessage( client:ClientWatcher, message:Message ):void {
-		if( this._clients.indexOf( client ) === - 1 ) return;
+	clientsReady():number {
+		return this._clientsReady.length;
+	}
 
-		if( ! message ) return;
-		if( typeof message !== "object" ) return;
-		if( ! ("type" in message) ) return;
+	executeAction( action:string ):void {
+		const client:ClientWatcher | undefined = this._clientsReady.shift();
 
-		switch( message.type ) {
-			case "Event":
-				this._handleClientEventMessage( message as EventMessage, client );
-				break;
-			default:
-				this.emit( "message", message );
-				break;
+		// TODO: Implement action queue
+		if( ! client ) throw new Error( "There are no clients available to execute the action" );
+
+		client.send( new CommandMessage( { id: this.id, type: this.type }, new ExecuteActionCommand( action ) ) );
+	}
+
+	async close() {
+		await Promise.all( this._clients.map( client => client.abort() ) );
+		this._removeListeners();
+	}
+
+	private _addClient():void {
+		this._clients.push( new ClientWatcher() );
+	}
+
+	private _registerListeners():void {
+		this._listeners.push( messageStream.addListener(
+			[
+				Message.isFrom( this._clients ),
+				EventMessage.is,
+				EventMessage.isOneOf( ClientEvent.Disconnected, ClientEvent.Exited )
+			],
+			this._onClientLost
+		) );
+		this._listeners.push( messageStream.addListener(
+			[
+				Message.isFrom( this._clients ),
+				EventMessage.is,
+				EventMessage.isOneOf( ClientEvent.Working )
+			],
+			this._onClientWorking
+		) );
+		this._listeners.push( messageStream.addListener(
+			[
+				Message.isFrom( this._clients ),
+				EventMessage.is,
+				EventMessage.isOneOf( ClientEvent.Ready )
+			],
+			this._onClientReady
+		) );
+	}
+
+	private _removeListeners():void {
+		this._listeners.forEach( messageStream.removeListener );
+	}
+
+	private _onClientLost:( message:Message ) => void = (function( this:ClientPool, message:Message ):void {
+		{
+			const index = this._clients.indexOf( (message.source) as ClientWatcher );
+			if( index !== - 1 ) this._clients.splice( index, 1 );
 		}
-	}
-
-	private _handleClientEventMessage( message:EventMessage, client:ClientWatcher ):void {
-		switch( message.event ) {
-			case ClientEvent.Disconnected:
-			case ClientEvent.Exited:
-				this._handleClientLost( message, client );
-				break;
+		{
+			const index = this._clientsReady.indexOf( (message.source) as ClientWatcher );
+			if( index !== - 1 ) this._clientsReady.splice( index, 1 );
 		}
 
-		this.emit( "message", message );
-	}
+		while( this._clients.length < this._size ) this._addClient();
+	}).bind( this );
 
-	private _handleClientLost( message:EventMessage, client:ClientWatcher ):void {
-		this._clients.splice( this._clients.indexOf( client ), 1 );
-	}
+	private _onClientReady:( message:Message ) => void = (function( this:ClientPool, message:Message ):void {
+		this._clientsReady.push( message.source as ClientWatcher );
+
+		if( this.clientsWorking() < this.size() ) messageStream.emit( new EventMessage( this, ClientEvent.Ready ) );
+	}).bind( this );
+
+	private _onClientWorking:( message:Message ) => void = (function( this:ClientPool, message:Message ):void {
+		const index = this._clientsReady.indexOf( (message.source) as ClientWatcher );
+		if( index !== - 1 ) this._clientsReady.splice( index, 1 );
+	}).bind( this );
 }

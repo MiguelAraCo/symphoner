@@ -11,14 +11,14 @@ const symphoner = new Symphoner( {
 symphoner.run( {
 	phases: [
 		{
-			duration: time( 2 ).minutes,
-			arrivalRate: time( 2 ).seconds,
+			duration: time( 3 ).seconds,
+			arrivalRate: time( 200 ).milliseconds,
 			clients: 5,
 			scenarios: [
-				// {
-				// 	action: __dirname + "/read-test.js",
-				// 	distribution: 80
-				// },
+				{
+					action: __dirname + "/read-test.js",
+					distribution: 80
+				},
 				{
 					action: __dirname + "/write-test.js",
 					distribution: 20

@@ -1,24 +1,33 @@
 import { ClientPool } from "./clientPool";
-import { MessageEmitter, Phase, Scenario } from "./models";
-import { ClientEvent, ClientEventMessage, CommandMessage, EventMessage } from "./message";
-import { ExecuteActionCommand } from "./command";
+import { Phase, Scenario } from "./models";
+import { ClientEvent, EventMessage, Message, MessageSource } from "./message";
+import { id } from "./id";
+import { messageStream } from "./messageStream";
 
 export interface PhaseOrchestratorConfiguration {
 
 }
 
-export class PhaseOrchestrator extends MessageEmitter {
+export class PhaseOrchestrator implements MessageSource {
+	static readonly type:string = "PhaseOrchestrator";
+
+	private static _getRandomNumber( min:number, max:number ):number {
+		return Math.random() * (max - min + 1) + min;
+	}
+
+	readonly id:string = id();
+	readonly type:string = PhaseOrchestrator.type;
+
 	private _scenariosDistribution:Map<Scenario, number>;
 	private _clientArrivalInterval:number | null = null;
+	private _listeners:string[] = [];
 
 	constructor( readonly phase:Phase, readonly clientPool:ClientPool = new ClientPool(), configuration?:PhaseOrchestratorConfiguration ) {
-		super();
-
 		this._scenariosDistribution = this._createScenariosDistributionMap( phase.scenarios );
 	}
 
 	async start() {
-		this._registerHandlers();
+		this._registerListeners();
 		this._startPhaseCycle();
 	}
 
@@ -26,10 +35,18 @@ export class PhaseOrchestrator extends MessageEmitter {
 		if( this.phase.clients > 1 ) this._clientArrivalInterval = setInterval( this._addClient.bind( this ), this.phase.arrivalRate );
 		this._addClient();
 		setTimeout( this._finishPhase.bind( this ), this.phase.duration );
+
+		messageStream.emit( new EventMessage( this, "Phase:Started" ) );
 	}
 
-	private _finishPhase():void {
-		// TODO
+	private async _finishPhase() {
+		this.clientPool.shrink( this.clientPool.size() );
+
+		await this.clientPool.close();
+
+		this._removeListeners();
+
+		messageStream.emit( new EventMessage( this, "Phase:Finished" ) );
 	}
 
 	private _addClient():void {
@@ -40,25 +57,26 @@ export class PhaseOrchestrator extends MessageEmitter {
 		}
 	}
 
-	private _registerHandlers():void {
-		this.clientPool.on( "message", this._handleMessage.bind( this ) );
+	private _registerListeners():void {
+		this._listeners.push( messageStream.addListener(
+			[
+				Message.isFrom( [ this.clientPool ] ),
+				EventMessage.is,
+				EventMessage.isOneOf( ClientEvent.Ready )
+			],
+			this._onClientReady
+		) );
 	}
 
-	protected _handleEventMessage( message:EventMessage ):void {
-		switch( message.event ) {
-			case ClientEvent.Ready:
-				this._handleClientReadyEvent( message as ClientEventMessage );
-				break;
-		}
-
-		super._handleEventMessage( message );
+	private _removeListeners():void {
+		this._listeners.forEach( messageStream.removeListener );
 	}
 
-	private _handleClientReadyEvent( message:ClientEventMessage ):void {
+	private _onClientReady:( message:Message ) => void = (function( this:PhaseOrchestrator, message:Message ):void {
 		const scenario:Scenario = this._pickScenario();
 
-		message.client.send( new CommandMessage( new ExecuteActionCommand( scenario.action ) ) );
-	}
+		this.clientPool.executeAction( scenario.action );
+	}).bind( this );
 
 	private _createScenariosDistributionMap( scenarios:Scenario[] ):Map<Scenario, number> {
 		const scenariosDistribution:Map<Scenario, number> = new Map();
@@ -90,9 +108,5 @@ export class PhaseOrchestrator extends MessageEmitter {
 		if( lastScenario === null ) throw new Error();
 		return lastScenario;
 
-	}
-
-	private static _getRandomNumber( min:number, max:number ):number {
-		return Math.random() * (max - min + 1) + min;
 	}
 }
