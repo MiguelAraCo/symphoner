@@ -38,8 +38,11 @@
     "typescript": "^2.6.2"
   },
   "dependencies": {
+    "@types/node-statsd": "^0.1.2",
     "@types/uuid": "^3.4.3",
     "caf": "^5.0.1",
+    "carbonldp": "^1.0.0-alpha.11",
+    "node-statsd": "^0.1.1",
     "uuid": "^3.2.1"
   }
 }

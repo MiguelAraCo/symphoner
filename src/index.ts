@@ -1,11 +1,16 @@
 import { Test } from "./models";
-import { PhaseOrchestrator } from "./phaseOrchestrator";
+import { PhaseEvent, PhaseOrchestrator } from "./phaseOrchestrator";
 import { messageStream } from "./messageStream";
 import { EventMessage } from "./message";
+import { StatsD } from "node-statsd";
+import { ActionReporter, PhaseReporter } from "./reporters";
 
 export interface StatsDConfiguration {
 	host:string;
 	port:number;
+	prefix?:string;
+	suffix?:string;
+	global_tags?:string[];
 }
 
 export interface SymphonerConfiguration {
@@ -13,15 +18,22 @@ export interface SymphonerConfiguration {
 }
 
 export class Symphoner {
-	constructor( private configuration:SymphonerConfiguration ) {}
+	private _statsd:StatsD;
 
-	run( test:Test ):void {
-		// FIXME: Validate configuration
-		// FIXME: Start phase
-		// FIXME: Set timeout for phase end
-		// FIXME: Start ClientPool
+	private _running:boolean = false;
+	private _test:Test;
+	private _orchestrators:PhaseOrchestrator[];
 
-		messageStream.addListener( () => true, message => {
+	private _phaseReporter:PhaseReporter;
+	private _actionReporter:ActionReporter;
+
+	constructor( private configuration:SymphonerConfiguration ) {
+		this._statsd = new StatsD( this.configuration.statsd );
+
+		messageStream.addListener( [
+			EventMessage.is,
+			EventMessage.isOneOf( PhaseEvent.Started, PhaseEvent.Ended )
+		], message => {
 			if( ! ("getHours" in message.timestamp) ) console.log( message );
 
 			let logMessage = `${message.timestamp.getHours()}:${message.timestamp.getMinutes()}:${message.timestamp.getSeconds()}:${message.timestamp.getMilliseconds()} - ${message.source.type}#${message.source.id}: ${message.type}`;
@@ -29,10 +41,26 @@ export class Symphoner {
 
 			console.log( logMessage );
 		} );
-
-		test.phases.forEach( phase => {
-			const orchestrator:PhaseOrchestrator = new PhaseOrchestrator( phase );
-			orchestrator.start();
-		} );
 	}
+
+	async run( test:Test ) {
+		this._test = test;
+
+		this._phaseReporter = new PhaseReporter( this._statsd ).init();
+		this._actionReporter = new ActionReporter( this._statsd ).init();
+
+		// TODO: Reuse client pools
+		this._orchestrators = test.phases.map( phase => new PhaseOrchestrator( phase ) );
+
+		try {
+			await this._orchestrators.reduce( ( previous, current ) => previous.then( () => current.run() ), Promise.resolve() );
+		} finally {
+			this._close();
+		}
+	}
+
+	private _close:() => void = (function( this:Symphoner ):void {
+		this._phaseReporter.close();
+		this._actionReporter.close();
+	}).bind( this );
 }

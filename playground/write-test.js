@@ -1,7 +1,7 @@
-module.exports = async function() {
-	console.log( "Doing something!" );
+const Carbon = require( "carbonldp/Carbon" ).Class;
 
-	await new Promise( ( resolve, reject ) => setTimeout( resolve, 5000 ) );
+module.exports = async function( statsd ) {
+	const carbon = new Carbon( "localhost:8083", false );
 
-	console.log( "Finished action" );
+	await carbon.documents.createChild( "/", {} );
 };

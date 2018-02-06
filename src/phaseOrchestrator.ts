@@ -4,9 +4,12 @@ import { ClientEvent, EventMessage, Message, MessageSource } from "./message";
 import { id } from "./id";
 import { messageStream } from "./messageStream";
 
-export interface PhaseOrchestratorConfiguration {
-
+export enum PhaseEvent {
+	Started = "Phase:Started",
+	Ended = "Phase:Ended",
 }
+
+export interface PhaseOrchestratorConfiguration {}
 
 export class PhaseOrchestrator implements MessageSource {
 	static readonly type:string = "PhaseOrchestrator";
@@ -18,25 +21,37 @@ export class PhaseOrchestrator implements MessageSource {
 	readonly id:string = id();
 	readonly type:string = PhaseOrchestrator.type;
 
+	readonly promise:Promise<any>;
+
+	private _resolve:() => void;
+	private _reject:( error:any ) => void;
+
 	private _scenariosDistribution:Map<Scenario, number>;
 	private _clientArrivalInterval:number | null = null;
 	private _listeners:string[] = [];
 
 	constructor( readonly phase:Phase, readonly clientPool:ClientPool = new ClientPool(), configuration?:PhaseOrchestratorConfiguration ) {
+		this.promise = new Promise( ( resolve, reject ) => {
+			this._resolve = resolve;
+			this._reject = reject;
+		} );
 		this._scenariosDistribution = this._createScenariosDistributionMap( phase.scenarios );
 	}
 
-	async start() {
+	async run() {
 		this._registerListeners();
 		this._startPhaseCycle();
+
+		return this.promise;
 	}
 
 	private _startPhaseCycle():void {
 		if( this.phase.clients > 1 ) this._clientArrivalInterval = setInterval( this._addClient.bind( this ), this.phase.arrivalRate );
 		this._addClient();
+
 		setTimeout( this._finishPhase.bind( this ), this.phase.duration );
 
-		messageStream.emit( new EventMessage( this, "Phase:Started" ) );
+		messageStream.emit( new EventMessage( this, PhaseEvent.Started ) );
 	}
 
 	private async _finishPhase() {
@@ -46,7 +61,9 @@ export class PhaseOrchestrator implements MessageSource {
 
 		this._removeListeners();
 
-		messageStream.emit( new EventMessage( this, "Phase:Finished" ) );
+		messageStream.emit( new EventMessage( this, PhaseEvent.Ended ) );
+
+		this._resolve();
 	}
 
 	private _addClient():void {

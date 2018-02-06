@@ -53,6 +53,7 @@ export enum ClientEvent {
 	ActionStarted = "Client:ActionStarted",
 	ActionFinished = "Client:ActionFinished",
 	ActionAborted = "Client:ActionAborted",
+	ActionErrored = "Client:ActionErrored",
 	Exited = "Client:Exited",
 	Disconnected = "Client:Disconnected"
 }

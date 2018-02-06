@@ -1,13 +1,19 @@
 import { promisify } from "util";
 import { stat as _stat, Stats } from "fs";
+import { StatsD } from "node-statsd";
+
+import { process } from "./forkedProcess";
+import { ClientEvent, EventMessage, MessageSource } from "./message";
+import { AbortCommand, Command, CommandMessage, ExecuteActionCommand } from "./command";
+import { id } from "./id";
+import { inspect } from "./httpInspector";
+import { Timestamp, Timestamps } from "./time";
 
 const stat:( file:string ) => Promise<Stats> = <any>promisify( _stat );
 
-import { process } from "./forkedProcess";
-import { EventMessage, ClientEvent, MessageSource } from "./message";
-import { AbortCommand, Command, CommandMessage, ExecuteActionCommand } from "./command";
-import { id } from "./id";
-
+class ActionTimestamps extends Timestamps {
+	finished:Timestamp = [ 0, 0 ];
+}
 
 export class Client implements MessageSource {
 	static readonly type:string = "Client";
@@ -15,9 +21,11 @@ export class Client implements MessageSource {
 	readonly id:string = id();
 	readonly type:string = Client.type;
 
+	private _statsd:StatsD = new StatsD( { host: "localhost", port: 8125 } );
 	private _waiting:boolean = true;
 
 	async init() {
+		inspect( this._statsd, "carbonldp" );
 		this._register();
 	}
 
@@ -55,11 +63,12 @@ export class Client implements MessageSource {
 			return;
 		}
 
+		const timestamps:ActionTimestamps = new ActionTimestamps();
 		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.ActionStarted ) );
 
 		let actionResult;
 		try {
-			actionResult = action();
+			actionResult = action( this._statsd );
 		} catch( error ) {
 			await this._handleActionsError( command.action, error );
 			return;
@@ -72,6 +81,11 @@ export class Client implements MessageSource {
 		} catch( error ) {
 			await this._handleActionsError( command.action, error );
 			return;
+		} finally {
+			timestamps.finished = process.hrtime();
+
+			const finished = ActionTimestamps.ms( timestamps.finished, timestamps.created );
+			this._statsd.timing( "carbonldp.action.time", finished );
 		}
 
 		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.ActionFinished ) );
@@ -147,7 +161,8 @@ export class Client implements MessageSource {
 	}
 
 	private async _handleActionsError( action:string, error:any ) {
-		console.error( "ERROR: There was an error while executing the action's script '%s'. Error:\n\t%o", action, error );
+		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.ActionErrored ) );
+		this._reset();
 	}
 }
 

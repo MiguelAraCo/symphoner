@@ -46,4 +46,22 @@ export function time( value:number ) {
 	return new Time( value );
 }
 
+export type Timestamp = [ number, number ];
+
+export abstract class Timestamps {
+	static ms( [ s1, ns1 ]:Timestamp, [ s2, ns2 ]:Timestamp ):number {
+		return (s1 - s2) * 1e3 + (ns1 - ns2) / 1e6;
+	}
+
+	static ns( [ s1, ns1 ]:Timestamp, [ s2, ns2 ]:Timestamp ):number {
+		return (s1 - s2) * 1e9 + (ns1 - ns2);
+	}
+
+	created:[ number, number ] = [ 0, 0 ];
+
+	constructor() {
+		this.created = process.hrtime();
+	}
+}
+
 export default time;
