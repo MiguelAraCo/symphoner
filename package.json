@@ -1,12 +1,12 @@
 {
   "name": "symphoner",
-  "version": "0.0.0",
+  "version": "1.0.0-alpha.1",
   "description": "Load/performance testing framework",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "prepublishOnly": "npm run build",
-    "build": "tsc",
+    "start": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
