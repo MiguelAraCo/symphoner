@@ -4,10 +4,11 @@ import { StatsD } from "node-statsd";
 
 import { process } from "./forkedProcess";
 import { ClientEvent, EventMessage, MessageSource } from "./message";
-import { AbortCommand, Command, CommandMessage, ExecuteActionCommand } from "./command";
+import { AbortCommand, Command, CommandMessage, ExecuteActionCommand, InitializeClientCommand } from "./command";
 import { id } from "./id";
 import { inspect } from "./httpInspector";
 import { Timestamp, Timestamps } from "./time";
+import { statsd } from "./stats/statsd";
 
 const stat:( file:string ) => Promise<Stats> = <any>promisify( _stat );
 
@@ -21,12 +22,18 @@ export class Client implements MessageSource {
 	readonly id:string = id();
 	readonly type:string = Client.type;
 
-	private _statsd:StatsD = new StatsD( { host: "localhost", port: 8125 } );
-	private _waiting:boolean = true;
+	private _waiting:boolean = false;
 
-	async init() {
-		inspect( this._statsd, "carbonldp" );
+	async listen() {
 		this._register();
+	}
+
+	async init( command:InitializeClientCommand ) {
+		statsd.instance = new StatsD( command.config.statsd );
+
+		inspect( statsd.instance );
+
+		this._reset();
 	}
 
 	async start( command:ExecuteActionCommand ) {
@@ -68,7 +75,7 @@ export class Client implements MessageSource {
 
 		let actionResult;
 		try {
-			actionResult = action( this._statsd );
+			actionResult = action( statsd.instance );
 		} catch( error ) {
 			await this._handleActionsError( command.action, error );
 			return;
@@ -84,10 +91,11 @@ export class Client implements MessageSource {
 		} finally {
 			timestamps.finished = process.hrtime();
 
-			const finished = ActionTimestamps.ms( timestamps.finished, timestamps.created );
-			this._statsd.timing( "carbonldp.action.time", finished );
+			const finished:number = ActionTimestamps.ms( timestamps.finished, timestamps.created );
+			statsd.instance.timing( "action.duration", finished );
 		}
 
+		statsd.instance.increment( "actions.success" );
 		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.ActionFinished ) );
 
 		this._reset();
@@ -95,7 +103,6 @@ export class Client implements MessageSource {
 
 	private _register():void {
 		process.on( "message", this._handleMessage.bind( this ) );
-		this._reset();
 
 	}
 
@@ -132,6 +139,9 @@ export class Client implements MessageSource {
 
 	private async _handleCommandMessage( message:CommandMessage ) {
 		switch( message.command.name ) {
+			case "InitializeClient":
+				await this.init( message.command as InitializeClientCommand );
+				break;
 			case "ExecuteAction":
 				await this._handleExecuteAction( message.command as ExecuteActionCommand );
 				break;
@@ -144,10 +154,7 @@ export class Client implements MessageSource {
 	}
 
 	private async _handleExecuteAction( command:ExecuteActionCommand ) {
-		if( ! this._waiting ) {
-			console.log( "The client is already executing an action" );
-			return;
-		}
+		if( ! this._waiting ) return;
 
 		await this.start( command );
 	}
@@ -162,8 +169,11 @@ export class Client implements MessageSource {
 
 	private async _handleActionsError( action:string, error:any ) {
 		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.ActionErrored ) );
+
+		statsd.instance.increment( "actions.error" );
+
 		this._reset();
 	}
 }
 
-(new Client()).init().catch( error => console.error( "ERROR! The client script has encountered an unexpected error:\n%e", error ) );
+(new Client()).listen().catch( error => console.error( "ERROR! The client script has encountered an unexpected error:\n%e", error ) );

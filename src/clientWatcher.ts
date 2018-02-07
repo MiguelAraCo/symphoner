@@ -1,9 +1,10 @@
 import { ChildProcess, fork } from "child_process";
 import time from "./time";
 import { ClientEvent, ClientEventMessage, EventMessage, Message, MessageSource } from "./message";
-import { AbortCommand, CommandMessage } from "./command";
+import { AbortCommand, CommandMessage, InitializeClientCommand } from "./command";
 import { id } from "./id";
 import { messageStream } from "./messageStream";
+import { statsd } from "./stats/statsd";
 
 export interface ClientWatcherConfiguration {
 	timeout?:number;
@@ -45,6 +46,7 @@ export class ClientWatcher implements MessageSource {
 		this._startClient();
 		this._registerListeners();
 		this._registerTimeout();
+		this._initializeClient();
 	}
 
 	async abort() {
@@ -83,6 +85,18 @@ export class ClientWatcher implements MessageSource {
 
 	private _startClient():void {
 		this._client = fork( this._configuration.clientScript );
+	}
+
+	private _initializeClient():void {
+		this._client.send( new CommandMessage( { id: this.id, type: this.type }, new InitializeClientCommand( {
+			statsd: {
+				host: statsd.instance.host,
+				port: statsd.instance.port,
+				prefix: statsd.instance.prefix,
+				suffix: statsd.instance.suffix,
+				global_tags: statsd.instance.global_tags,
+			}
+		} ) ) );
 	}
 
 	private _registerListeners():void {

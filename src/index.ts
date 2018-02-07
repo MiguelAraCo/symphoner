@@ -4,6 +4,7 @@ import { messageStream } from "./messageStream";
 import { EventMessage } from "./message";
 import { StatsD } from "node-statsd";
 import { ActionReporter, PhaseReporter } from "./reporters";
+import { statsd } from "./stats/statsd";
 
 export interface StatsDConfiguration {
 	host:string;
@@ -18,8 +19,6 @@ export interface SymphonerConfiguration {
 }
 
 export class Symphoner {
-	private _statsd:StatsD;
-
 	private _running:boolean = false;
 	private _test:Test;
 	private _orchestrators:PhaseOrchestrator[];
@@ -28,7 +27,7 @@ export class Symphoner {
 	private _actionReporter:ActionReporter;
 
 	constructor( private configuration:SymphonerConfiguration ) {
-		this._statsd = new StatsD( this.configuration.statsd );
+		statsd.instance = new StatsD( this.configuration.statsd );
 
 		messageStream.addListener( [
 			EventMessage.is,
@@ -46,8 +45,8 @@ export class Symphoner {
 	async run( test:Test ) {
 		this._test = test;
 
-		this._phaseReporter = new PhaseReporter( this._statsd ).init();
-		this._actionReporter = new ActionReporter( this._statsd ).init();
+		this._phaseReporter = new PhaseReporter().init();
+		this._actionReporter = new ActionReporter().init();
 
 		// TODO: Reuse client pools
 		this._orchestrators = test.phases.map( phase => new PhaseOrchestrator( phase ) );

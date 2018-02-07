@@ -1,4 +1,5 @@
 import { Message, MessageSource } from "./message";
+import { StatsDConfiguration } from "symphoner";
 
 export interface Command {
 	readonly name:string;
@@ -11,6 +12,16 @@ export class CommandMessage implements Message {
 	readonly type:string = CommandMessage.type;
 
 	constructor( readonly source:MessageSource, readonly command:Command ) {}
+}
+
+export interface ClientConfig {
+	statsd:StatsDConfiguration;
+}
+
+export class InitializeClientCommand implements Command {
+	readonly name:string = "InitializeClient";
+
+	constructor( readonly config:ClientConfig ) {}
 }
 
 export class ExecuteActionCommand implements Command {

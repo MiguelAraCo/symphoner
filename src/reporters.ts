@@ -1,15 +1,12 @@
 import { ClientEvent, EventMessage, Message } from "./message";
-import { StatsD } from "node-statsd";
 import { messageStream } from "./messageStream";
 import { PhaseEvent } from "./phaseOrchestrator";
+import { statsd } from "./stats/statsd";
 
 export abstract class AbstractReporter {
-	protected _statsd:StatsD;
 	protected _listeners:string[] = [];
 
-	constructor( statsd:StatsD ) {
-		this._statsd = statsd;
-	}
+	constructor() {}
 
 	init():this {
 		this._registerListeners();
@@ -34,8 +31,8 @@ export abstract class AbstractReporter {
 export class PhaseReporter extends AbstractReporter {
 	private _phaseStarted:Date | null;
 
-	constructor( statsd:StatsD ) {
-		super( statsd );
+	constructor() {
+		super();
 	}
 
 	protected _registerListeners():string[] {
@@ -66,13 +63,13 @@ export class PhaseReporter extends AbstractReporter {
 
 		const duration:number = this._phaseStarted.getMilliseconds() - message.timestamp.getMilliseconds();
 
-		this._statsd.timing( "symphoner.phase.duration", duration );
+		statsd.instance.timing( "symphoner.phase.duration", duration );
 	}).bind( this );
 }
 
 export class ActionReporter extends AbstractReporter {
-	constructor( statsd:StatsD ) {
-		super( statsd );
+	constructor() {
+		super();
 	}
 
 	protected _registerListeners():string[] {
@@ -95,7 +92,7 @@ export class ActionReporter extends AbstractReporter {
 	}
 
 	private _onActionStarted:( message:Message ) => void = (function( this:ActionReporter, message:Message ) {
-		this._statsd.increment( "symphoner.actions" );
+		statsd.instance.increment( "symphoner.actions" );
 	}).bind( this );
 
 	private _onActionEnded:( message:Message ) => void = (function( this:ActionReporter, message:Message ) {
