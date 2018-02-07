@@ -95,7 +95,7 @@ export class ClientWatcher implements MessageSource {
 				prefix: statsd.instance.prefix,
 				suffix: statsd.instance.suffix,
 				global_tags: statsd.instance.global_tags,
-			}
+			},
 		} ) ) );
 	}
 

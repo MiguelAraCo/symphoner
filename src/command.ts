@@ -27,7 +27,7 @@ export class InitializeClientCommand implements Command {
 export class ExecuteActionCommand implements Command {
 	readonly name:string = "ExecuteAction";
 
-	constructor( readonly action:string ) {}
+	constructor( readonly action:string, readonly settings:{ [name:string]:any } ) {}
 }
 
 export class AbortCommand implements Command {

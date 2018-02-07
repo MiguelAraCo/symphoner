@@ -3,6 +3,7 @@ import { ClientEvent, EventMessage, Message } from "./message";
 import { messageStream } from "./messageStream";
 import { id } from "./id";
 import { CommandMessage, ExecuteActionCommand } from "./command";
+import { Symphoner } from "symphoner";
 
 export interface ClientPoolConfiguration {
 
@@ -50,7 +51,7 @@ export class ClientPool {
 		// TODO: Implement action queue
 		if( ! client ) throw new Error( "There are no clients available to execute the action" );
 
-		client.send( new CommandMessage( { id: this.id, type: this.type }, new ExecuteActionCommand( action ) ) );
+		client.send( new CommandMessage( { id: this.id, type: this.type }, new ExecuteActionCommand( action, Symphoner.instance.configuration.settings || {} ) ) );
 	}
 
 	async close() {

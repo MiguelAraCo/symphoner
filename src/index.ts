@@ -16,9 +16,16 @@ export interface StatsDConfiguration {
 
 export interface SymphonerConfiguration {
 	statsd:StatsDConfiguration;
+	settings?:{ [name:string]:any };
 }
 
 export class Symphoner {
+	static get instance():Symphoner {
+		return Symphoner._instance;
+	}
+
+	private static _instance:Symphoner;
+
 	private _running:boolean = false;
 	private _test:Test;
 	private _orchestrators:PhaseOrchestrator[];
@@ -26,7 +33,9 @@ export class Symphoner {
 	private _phaseReporter:PhaseReporter;
 	private _actionReporter:ActionReporter;
 
-	constructor( private configuration:SymphonerConfiguration ) {
+	constructor( public configuration:SymphonerConfiguration ) {
+		Symphoner._instance = this;
+
 		statsd.instance = new StatsD( this.configuration.statsd );
 
 		messageStream.addListener( [

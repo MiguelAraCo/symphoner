@@ -9,6 +9,7 @@ import { id } from "./id";
 import { inspect } from "./httpInspector";
 import { Timestamp, Timestamps } from "./time";
 import { statsd } from "./stats/statsd";
+import { Action } from "./actions";
 
 const stat:( file:string ) => Promise<Stats> = <any>promisify( _stat );
 
@@ -55,9 +56,9 @@ export class Client implements MessageSource {
 			return;
 		}
 
-		let action;
+		let action:Action;
 		try {
-			action = require( command.action );
+			action = require( command.action ) as Action;
 		} catch( error ) {
 			console.error( "ERROR: Couldn't require action's script '%s':\n\t%o", command.action, error );
 			// FIXME
@@ -75,7 +76,10 @@ export class Client implements MessageSource {
 
 		let actionResult;
 		try {
-			actionResult = action( statsd.instance );
+			actionResult = action( {
+				statsd: statsd.instance,
+				settings: command.settings,
+			} );
 		} catch( error ) {
 			await this._handleActionsError( command.action, error );
 			return;
