@@ -4,6 +4,7 @@ import { messageStream } from "./messageStream";
 import { id } from "./id";
 import { CommandMessage, ExecuteActionCommand } from "./command";
 import { Symphoner } from "symphoner";
+import { statsd } from "./stats/statsd";
 
 export interface ClientPoolConfiguration {
 
@@ -27,6 +28,8 @@ export class ClientPool {
 	grow( clients:number = 1 ):void {
 		this._size = this._size + clients;
 		while( this._clients.length < this._size ) this._addClient();
+
+		statsd.instance.gauge( "clients", this._size );
 	}
 
 	shrink( clients:number = 1, removeUnusedClients:boolean = false ):void {
@@ -57,6 +60,8 @@ export class ClientPool {
 	async close() {
 		await Promise.all( this._clients.map( client => client.abort() ) );
 		this._removeListeners();
+
+		statsd.instance.gauge( "clients", 0 );
 	}
 
 	private _addClient():void {
