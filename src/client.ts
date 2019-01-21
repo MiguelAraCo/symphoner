@@ -1,183 +1,205 @@
-import { promisify } from "util";
-import { stat as _stat, Stats } from "fs";
-import { StatsD } from "node-statsd";
+import {promisify} from "util";
+import {stat as _stat, Stats} from "fs";
+import {StatsD} from "node-statsd";
 
-import { process } from "./forkedProcess";
-import { ClientEvent, EventMessage, MessageSource } from "./message";
-import { AbortCommand, Command, CommandMessage, ExecuteActionCommand, InitializeClientCommand } from "./command";
-import { id } from "./id";
-import { inspect } from "./httpInspector";
-import { Timestamp, Timestamps } from "./time";
-import { statsd } from "./stats/statsd";
-import { Action } from "./actions";
+import {process} from "./forkedProcess";
+import {ClientEvent, EventMessage, MessageSource} from "./message";
+import {AbortCommand, Command, CommandMessage, ExecuteActionCommand, InitializeClientCommand} from "./command";
+import {id} from "./id";
+import {injectHTTPInspector} from "./httpInspector";
+import {Timestamp, Timestamps} from "./time";
+import {statsd} from "./stats/statsd";
+import {Action} from "./actions";
+import {State} from "./state";
 
-const stat:( file:string ) => Promise<Stats> = <any>promisify( _stat );
+const stat: (file: string) => Promise<Stats> = promisify(_stat);
 
 class ActionTimestamps extends Timestamps {
-	finished:Timestamp = [ 0, 0 ];
+	finished: Timestamp = [0, 0];
 }
 
-export class Client implements MessageSource {
-	static readonly type:string = "Client";
+/**
+ * Model intended to be used as the main class of a forked process that will act as a Client.
+ * <p>
+ * After creating the model it will start listening to messages through Node.js {@link process} when the parent process
+ * sends {@link CommandMessage}s.
+ */
+class Client implements MessageSource {
+	static readonly type: string = "Client";
 
-	readonly id:string = id();
-	readonly type:string = Client.type;
+	readonly id: string = id();
+	readonly type: string = Client.type;
 
-	private _waiting:boolean = false;
+	private _state: State;
 
+	/**
+	 * Listen to messages coming from the parent process
+	 */
 	async listen() {
-		this._register();
+		process.on("message", this._handleMessage.bind(this));
 	}
 
-	async init( command:InitializeClientCommand ) {
-		statsd.instance = new StatsD( command.config.statsd );
+	private async _handleMessage(message: any) {
+		if (!message || typeof message !== "object" || typeof message.type !== "string") return;
 
-		inspect( statsd.instance );
+		switch (message.type) {
+			case "Command":
+				await this._handleCommandMessage(message);
+				break;
+			default:
+				break;
+		}
+	}
+
+	private async _handleCommandMessage(message: CommandMessage) {
+		switch (message.command.name) {
+			case "InitializeClient":
+				await this._init(message.command as InitializeClientCommand);
+				break;
+			case "ExecuteAction":
+				await this._start(message.command as ExecuteActionCommand);
+				break;
+			case "Abort":
+				await this._abort(message.command as AbortCommand);
+				break;
+			default:
+				break;
+		}
+	}
+
+	private async _init(command: InitializeClientCommand) {
+		statsd.instance = new StatsD(command.config.statsd);
+
+		injectHTTPInspector(statsd.instance);
 
 		this._reset();
 	}
 
-	async start( command:ExecuteActionCommand ) {
-		this._waiting = false;
-		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.Working ) );
+	private async _abort(command: AbortCommand) {
+		if (this._state === State.IDLE) return;
 
-		let stats:Stats;
+		process.send(EventMessage.build(
+			MessageSource.of(this),
+			ClientEvent.ActionAborted,
+		));
+
+		setTimeout(() => process.exit(0), 0);
+	}
+
+	private async _start(command: ExecuteActionCommand) {
+		if (this._state === State.RUNNING) {
+			console.error("The client is already running an action");
+			this._handleError();
+			return;
+		}
+		this._state = State.RUNNING;
+
+		process.send(EventMessage.build(
+			MessageSource.of(this),
+			ClientEvent.Working
+		));
+
+		let stats: Stats;
 		try {
-			stats = await stat( command.action );
-		} catch( error ) {
-			console.error( "ERROR: Couldn't open action's file:\n\t%o", error );
-			// FIXME
+			stats = await stat(command.action);
+		} catch (error) {
+			console.error("ERROR: Couldn't open action's file:\n\t%o", error);
+			this._handleError();
 			return;
 		}
 
-		if( ! stats.isFile() ) {
-			console.error( "ERROR: The path registered for this action: '%s' isn't a file", command.action );
-			// FIXME
+		if (!stats.isFile()) {
+			console.error("ERROR: The path registered for this action: '%s' isn't a file", command.action);
+			this._handleError();
 			return;
 		}
 
-		let action:Action;
+		let action: Action;
 		try {
-			action = require( command.action ) as Action;
-		} catch( error ) {
-			console.error( "ERROR: Couldn't require action's script '%s':\n\t%o", command.action, error );
-			// FIXME
+			action = require(command.action) as Action;
+		} catch (error) {
+			console.error("ERROR: Couldn't require action's script '%s':\n\t%o", command.action, error);
+			this._handleError();
 			return;
 		}
 
-		if( typeof action !== "function" ) {
-			console.error( "ERROR: The action's script '%s' doesn't export a function", command.action );
-			// FIXME
+		if (typeof action !== "function") {
+			console.error("ERROR: The action's script '%s' doesn't export a function", command.action);
+			this._handleError();
 			return;
 		}
 
-		const timestamps:ActionTimestamps = new ActionTimestamps();
-		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.ActionStarted ) );
+		const timestamps: ActionTimestamps = new ActionTimestamps();
+		process.send(EventMessage.build(
+			MessageSource.of(this),
+			ClientEvent.ActionStarted,
+		));
 
 		let actionResult;
 		try {
-			actionResult = action( {
+			actionResult = action({
 				statsd: statsd.instance,
 				settings: command.settings,
-			} );
-		} catch( error ) {
-			await this._handleActionsError( command.action, error );
+			});
+		} catch (error) {
+			await this._handleActionsError(command.action, error);
 			return;
 		}
 
-		actionResult = ! actionResult || ! ("then" in actionResult) ? Promise.resolve( actionResult ) : actionResult;
+		// Turn the result into a Promise if it is not already a Promise
+		actionResult = !actionResult || !("then" in actionResult) ? Promise.resolve(actionResult) : actionResult;
 
 		try {
 			await actionResult;
-		} catch( error ) {
-			await this._handleActionsError( command.action, error );
+		} catch (error) {
+			await this._handleActionsError(command.action, error);
 			return;
 		} finally {
 			timestamps.finished = process.hrtime();
 
-			const finished:number = ActionTimestamps.ms( timestamps.finished, timestamps.created );
-			statsd.instance.timing( "action.duration", finished );
+			const finished: number = ActionTimestamps.ms(timestamps.finished, timestamps.created);
+			statsd.instance.timing("action.duration", finished);
 		}
 
-		statsd.instance.increment( "actions.success" );
-		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.ActionFinished ) );
+		statsd.instance.increment("actions.success");
+		process.send(EventMessage.build(
+			MessageSource.of(this),
+			ClientEvent.ActionFinished,
+		));
 
 		this._reset();
 	}
 
-	private _register():void {
-		process.on( "message", this._handleMessage.bind( this ) );
-
-	}
-
-	private _reset():void {
-		this._waiting = true;
-		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.Ready ) );
-	}
-
-	private async _handleMessage( message:any ) {
-		if( ! message || typeof message !== "object" || typeof message.type !== "string" ) {
-			console.log( "Unrecognized message:\n\t%o", message );
-			return;
-		}
-
-		switch( message.type ) {
-			case "Event":
-				await this._handleEventMessage( message );
-				break;
-			case "Command":
-				await this._handleCommandMessage( message );
-				break;
-			default:
-				console.log( "Unrecognized message:\n\t%o", message );
-				break;
-		}
-	}
-
-	private async _handleEventMessage( message:EventMessage ) {
-		switch( message.event ) {
-			default:
-				break;
-		}
-	}
-
-	private async _handleCommandMessage( message:CommandMessage ) {
-		switch( message.command.name ) {
-			case "InitializeClient":
-				await this.init( message.command as InitializeClientCommand );
-				break;
-			case "ExecuteAction":
-				await this._handleExecuteAction( message.command as ExecuteActionCommand );
-				break;
-			case "Abort":
-				await this._handleAbortCommand( message.command as AbortCommand );
-				break;
-			default:
-				break;
-		}
-	}
-
-	private async _handleExecuteAction( command:ExecuteActionCommand ) {
-		if( ! this._waiting ) return;
-
-		await this.start( command );
-	}
-
-	private async _handleAbortCommand( command:AbortCommand ) {
-		if( this._waiting ) return;
-
-		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.ActionAborted ) );
-
-		setTimeout( () => process.exit( 0 ), 0 );
-	}
-
-	private async _handleActionsError( action:string, error:any ) {
-		process.send( new EventMessage( { id: this.id, type: this.type }, ClientEvent.ActionErrored ) );
-
-		statsd.instance.increment( "actions.error" );
+	private _handleError() {
+		process.send(EventMessage.build(
+			MessageSource.of(this),
+			ClientEvent.Error,
+		));
 
 		this._reset();
 	}
+
+	private _handleActionsError(action: string, error: any) {
+		process.send(EventMessage.build(
+			MessageSource.of(this),
+			ClientEvent.ActionErrored,
+		));
+
+		statsd.instance.increment("actions.error");
+
+		this._reset();
+	}
+
+	private _reset() {
+		this._state = State.IDLE;
+
+		process.send(EventMessage.build(
+			MessageSource.of(this),
+			ClientEvent.Ready,
+		));
+	}
+
+
 }
 
-(new Client()).listen().catch( error => console.error( "ERROR! The client script has encountered an unexpected error:\n%e", error ) );
+(new Client()).listen().catch(error => console.error("ERROR! The client script has encountered an unexpected error:\n%e", error));

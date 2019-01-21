@@ -1,38 +1,49 @@
+import { Symphoner } from "./index";
 import { ClientWatcher } from "./clientWatcher";
-import { ClientEvent, EventMessage, Message } from "./message";
+import {ClientEvent, EventMessage, Message, MessageSource} from "./message";
 import { messageStream } from "./messageStream";
 import { id } from "./id";
 import { CommandMessage, ExecuteActionCommand } from "./command";
-import { Symphoner } from "symphoner";
 import { statsd } from "./stats/statsd";
 
-export interface ClientPoolConfiguration {
-
-}
-
+/**
+ * Manages a pool of clients and distributes actions between them
+ */
 export class ClientPool {
 	readonly id:string = id();
 	readonly type:"ClientPool" = "ClientPool";
 
 	private _size:number = 0;
 
-	private _clients:ClientWatcher[] = [];
-	private _clientsReady:ClientWatcher[] = [];
+	private _clientsRunning:ClientWatcher[] = [];
+	private _clientsIdle:ClientWatcher[] = [];
 
 	private _listeners:string[] = [];
 
-	constructor( configuration?:ClientPoolConfiguration ) {
+	constructor() {
 		this._registerListeners();
 	}
 
-	grow( clients:number = 1 ):void {
+	/**
+	 * Grow the number of clients available
+	 * @param clients - Number of clients to add to the pool
+	 */
+	grow( clients:number = 1 ) {
 		this._size = this._size + clients;
-		while( this._clients.length < this._size ) this._addClient();
+		while( this._clientsRunning.length < this._size ) this._addClient();
 
+		/*
+			2019-01-21 @MiguelAraCo
+			TODO[code-quality]: Move to a Reporter to abstract StatsD logic
+		*/
 		statsd.instance.gauge( "clients", this._size );
 	}
 
-	shrink( clients:number = 1, removeUnusedClients:boolean = false ):void {
+	/**
+	 * Shrink the size of the pool
+	 * @param clients - Number of clients to remove from the pool
+	 */
+	shrink( clients:number = 1 ) {
 		this._size = this._size - clients;
 	}
 
@@ -40,86 +51,108 @@ export class ClientPool {
 		return this._size;
 	}
 
+	/**
+	 * Returns the number of clients currently executing an action
+	 */
 	clientsWorking():number {
-		return this._clients.length - this._clientsReady.length;
+		return this._clientsRunning.length - this._clientsIdle.length;
 	}
 
-	clientsReady():number {
-		return this._clientsReady.length;
+	/**
+	 * Returns the number of clients ready to execute an action
+	 */
+	clientsIdle():number {
+		return this._clientsIdle.length;
 	}
 
-	executeAction( action:string ):void {
-		const client:ClientWatcher | undefined = this._clientsReady.shift();
+	/**
+	 * Executes an action on a random available client
+	 * @param action
+	 */
+	executeAction( action:string ) {
+		const client:ClientWatcher | undefined = this._clientsIdle.shift();
 
-		// TODO: Implement action queue
 		if( ! client ) throw new Error( "There are no clients available to execute the action" );
 
-		client.send( new CommandMessage( { id: this.id, type: this.type }, new ExecuteActionCommand( action, Symphoner.instance.configuration.settings || {} ) ) );
+		client.send( CommandMessage.build(
+			this,
+			ExecuteActionCommand.build( action, Symphoner.instance.configuration.settings || {} )
+		) );
 	}
 
 	async close() {
-		await Promise.all( this._clients.map( client => client.abort() ) );
+		// Empty client pool
+		this.shrink( this.size() );
+
+		await Promise.all( this._clientsRunning.map( client => client.abort() ) );
+
 		this._removeListeners();
 
+		/*
+			2019-01-21 @MiguelAraCo
+			TODO[code-quality]: Move to a Reporter to abstract StatsD logic
+		*/
 		statsd.instance.gauge( "clients", 0 );
 	}
 
-	private _addClient():void {
-		this._clients.push( new ClientWatcher() );
+	private _addClient() {
+		this._clientsRunning.push( new ClientWatcher() );
 	}
 
-	private _registerListeners():void {
+	private _registerListeners() {
 		this._listeners.push( messageStream.addListener(
 			[
-				Message.isFrom( this._clients ),
+				Message.isFromAny( this._clientsRunning ),
 				EventMessage.is,
 				EventMessage.isOneOf( ClientEvent.Disconnected, ClientEvent.Exited )
 			],
-			this._onClientLost
+			this._onClientLost.bind( this )
 		) );
 		this._listeners.push( messageStream.addListener(
 			[
-				Message.isFrom( this._clients ),
+				Message.isFromAny( this._clientsRunning ),
 				EventMessage.is,
 				EventMessage.isOneOf( ClientEvent.Working )
 			],
-			this._onClientWorking
+			this._onClientWorking.bind( this )
 		) );
 		this._listeners.push( messageStream.addListener(
 			[
-				Message.isFrom( this._clients ),
+				Message.isFromAny( this._clientsRunning ),
 				EventMessage.is,
 				EventMessage.isOneOf( ClientEvent.Ready )
 			],
-			this._onClientReady
+			this._onClientReady.bind( this )
 		) );
 	}
 
-	private _removeListeners():void {
+	private _removeListeners() {
 		this._listeners.forEach( messageStream.removeListener );
 	}
 
-	private _onClientLost:( message:Message ) => void = (function( this:ClientPool, message:Message ):void {
+	private _onClientLost( message:Message ) {
 		{
-			const index = this._clients.indexOf( (message.source) as ClientWatcher );
-			if( index !== - 1 ) this._clients.splice( index, 1 );
+			// Search for the client in the clientsRunning queue
+			const index = this._clientsRunning.indexOf( (message.source) as ClientWatcher );
+			if( index !== - 1 ) this._clientsRunning.splice( index, 1 );
 		}
 		{
-			const index = this._clientsReady.indexOf( (message.source) as ClientWatcher );
-			if( index !== - 1 ) this._clientsReady.splice( index, 1 );
+			// Search for the client in the clientsIdle queue
+			const index = this._clientsIdle.indexOf( (message.source) as ClientWatcher );
+			if( index !== - 1 ) this._clientsIdle.splice( index, 1 );
 		}
 
-		while( this._clients.length < this._size ) this._addClient();
-	}).bind( this );
+		while( this._clientsRunning.length < this._size ) this._addClient();
+	}
 
-	private _onClientReady:( message:Message ) => void = (function( this:ClientPool, message:Message ):void {
-		this._clientsReady.push( message.source as ClientWatcher );
+	private _onClientReady( message:Message ) {
+		this._clientsIdle.push( message.source as ClientWatcher );
 
-		if( this.clientsWorking() < this.size() ) messageStream.emit( new EventMessage( this, ClientEvent.Ready ) );
-	}).bind( this );
+		if( this.clientsWorking() < this.size() ) messageStream.emit( EventMessage.build( this, ClientEvent.Ready ) );
+	}
 
-	private _onClientWorking:( message:Message ) => void = (function( this:ClientPool, message:Message ):void {
-		const index = this._clientsReady.indexOf( (message.source) as ClientWatcher );
-		if( index !== - 1 ) this._clientsReady.splice( index, 1 );
-	}).bind( this );
+	private _onClientWorking( message:Message ) {
+		const index = this._clientsIdle.indexOf( (message.source) as ClientWatcher );
+		if( index !== - 1 ) this._clientsIdle.splice( index, 1 );
+	}
 }

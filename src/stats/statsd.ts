@@ -1,11 +1,16 @@
 import { StatsD } from "node-statsd";
 
-export let statsd:{ instance:StatsD, [x:string]:any } = {
-	_instance: null,
+export let instance:StatsD | null;
+
+export const statsd = {
 	get instance():StatsD {
-		return this._instance;
+		if( instance === null ) throw new Error( "A StatsD instance hasn't been initialized" );
+		return instance;
 	},
 	set instance( statsd:StatsD ) {
-		this._instance = statsd;
-	}
+		instance = statsd;
+	},
+	close() {
+		instance = null;
+	},
 };

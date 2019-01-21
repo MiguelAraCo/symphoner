@@ -14,7 +14,7 @@ class RequestTimestamps extends Timestamps {
 	finished:Timestamp = [ 0, 0 ];
 }
 
-export function inspect( statsd:StatsD, prefix:string = "" ):void {
+export function injectHTTPInspector( statsd:StatsD, prefix:string = "" ):void {
 	prefix = prefix ? ! prefix.endsWith( "." ) ? prefix + "." : prefix : "";
 
 	const originalRequest = http.request.bind( http );
